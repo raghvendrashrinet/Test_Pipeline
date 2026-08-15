@@ -1,0 +1,9 @@
+terraform {
+  required_version = ">= 1.0.0"
+  backend "azurerm" {
+    resource_group_name = "rg1"
+    storage_account_name = "satfstate123321"
+    container_name = "tfstate"
+    key = "terraform.tfstate"
+  }
+}

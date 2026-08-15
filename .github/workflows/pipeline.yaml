@@ -1,1 +1,92 @@
-##
+name: "Terraform PR & Deploy Pipeline"
+
+on:
+  pull_request:
+    branches: [ "main" ]
+  push:
+    branches: [ "main" ]
+
+jobs:
+  # ------------------------------------------------------------------
+  # Stage 1: Pull Request CI (Lint, Plan, Scan & Report)
+  # ------------------------------------------------------------------
+  pr-validation:
+    name: "PR Validation & Security Scans"
+    # if Prevents PR validation from re-running during the post-merge push event
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Format & Init
+        run: |
+          terraform fmt -check
+          terraform init
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      - name: Terraform Plan
+        id: plan
+        run: |
+          terraform plan -out=tfplan
+          terraform show -json tfplan > tfplan.json
+          terraform show -no-color tfplan > plan_output.txt
+
+      - name: Run Security Scans (tfsec & Checkov)
+        run: |
+          # Run tfsec on the plan
+          docker run --rm -v $(pwd):/src tfsec/tfsec /src
+
+          # Run Checkov on the JSON plan
+          docker run --rm -v $(pwd):/tf bridgecrew/checkov -f /tf/tfplan.json
+
+      - name: Post Plan & Scan Summary to PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const planText = fs.readFileSync('plan_output.txt', 'utf8');
+            const output = `#### Terraform Plan Output 📖
+            \`\`\`hcl
+            ${planText.substring(0, 6000)}
+            \`\`\`
+            *Note: Full plan attached to job logs.*`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })
+
+  # ------------------------------------------------------------------
+  # Stage 2: CD / Apply Stage (Main Branch Post-Merge)
+  # ------------------------------------------------------------------
+  deploy:
+    name: "Terraform Apply"
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production # Triggers manual approval gate in GitHub Settings
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Terraform Init & Apply
+        run: |
+          terraform init
+          terraform apply -auto-approve
