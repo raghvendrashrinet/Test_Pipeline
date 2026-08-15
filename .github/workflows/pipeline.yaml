@@ -36,7 +36,7 @@ jobs:
         run: |
           terraform plan -out=tfplan
           terraform show -json tfplan > tfplan.json
-          terraform show tfplan > plan_output.txt
+          terraform show -no-color tfplan > plan_output.txt
 
       - name: Run Security Scans (tfsec & Checkov)
         run: |
